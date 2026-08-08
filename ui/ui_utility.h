@@ -12,6 +12,8 @@
 #include <QtCore/QEvent>
 #include <QtWidgets/QWidget>
 
+#include <optional>
+
 class QPixmap;
 class QImage;
 class QWheelEvent;
@@ -73,6 +75,11 @@ void SendPendingMoveResizeEvents(not_null<QWidget*> target);
 	QRect rect = QRect(),
 	QColor bg = QColor(255, 255, 255, 0));
 
+[[nodiscard]] QPixmap GrabOpaque(
+	not_null<QWidget*> target,
+	QRect rect,
+	QColor bg);
+
 void RenderWidget(
 	QPainter &painter,
 	not_null<QWidget*> source,
@@ -113,10 +120,6 @@ inline void SendSynteticMouseEvent(
 
 [[nodiscard]] QPixmap PixmapFromImage(QImage &&image);
 
-[[nodiscard]] bool IsContentVisible(
-	not_null<QWidget*> widget,
-	const QRect &rect = QRect());
-
 int WheelDirection(not_null<QWheelEvent*> e);
 
 [[nodiscard]] QPoint MapFrom(
@@ -139,6 +142,19 @@ void SetGeometryAndScreen(
 [[nodiscard]] QPoint ScrollDelta(
 	not_null<QWheelEvent*> e,
 	bool touch = false);
+
+class ScrollDirectionLock final {
+public:
+	[[nodiscard]] std::optional<Qt::Orientation> update(
+		Qt::ScrollPhase phase,
+		QPointF delta);
+
+	void reset();
+
+private:
+	std::optional<Qt::Orientation> _locked;
+
+};
 
 [[nodiscard]] QColor BlendColors(QColor color1, QColor color2, float64 ratio);
 

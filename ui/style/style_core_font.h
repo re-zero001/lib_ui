@@ -12,6 +12,8 @@
 #include <QtGui/QFont>
 #include <QtGui/QFontMetrics>
 
+#include <private/qfixed_p.h>
+
 #include <cmath>
 
 namespace style {
@@ -20,12 +22,13 @@ namespace style {
 void SetCustomFont(const QString &font);
 
 enum class FontFlag : uchar {
-	Bold = 0x01,
-	Italic = 0x02,
-	Underline = 0x04,
-	StrikeOut = 0x08,
-	Semibold = 0x10,
-	Monospace = 0x20,
+	Bold       = 0x01,
+	Italic     = 0x02,
+	Underline  = 0x04,
+	StrikeOut  = 0x08,
+	SubOrSuper = 0x10, // Subscript or superscript.
+
+	Monospace  = 0x20,
 };
 inline constexpr bool is_flag_type(FontFlag) { return true; }
 using FontFlags = base::flags<FontFlag>;
@@ -42,14 +45,16 @@ struct FontResolveResult {
 };
 [[nodiscard]] const FontResolveResult *FindAdjustResult(const QFont &font);
 
-namespace internal {
+} // namespace style
+
+namespace style::internal {
 
 void StartFonts();
 
 void DestroyFonts();
 int RegisterFontFamily(const QString &family);
 
-inline constexpr auto kFontVariants = 0x40;
+inline constexpr auto kFontVariants = 0x21;
 
 class Font;
 using FontVariants = std::array<Font, kFontVariants>;
@@ -57,7 +62,7 @@ using FontVariants = std::array<Font, kFontVariants>;
 class FontData;
 class Font final {
 public:
-	Font(Qt::Initialization = Qt::Uninitialized) {
+	constexpr Font(Qt::Initialization = Qt::Uninitialized) {
 	}
 	Font(int size, FontFlags flags, const QString &family);
 	Font(int size, FontFlags flags, int family);
@@ -107,12 +112,15 @@ public:
 			Qt::TextElideMode mode = Qt::ElideRight) const {
 		return _m.elidedText(str, mode, width);
 	}
+	[[nodiscard]] const QFontMetricsF &metrics() const {
+		return _m;
+	}
 
 	[[nodiscard]] Font bold(bool set = true) const;
 	[[nodiscard]] Font italic(bool set = true) const;
 	[[nodiscard]] Font underline(bool set = true) const;
 	[[nodiscard]] Font strikeout(bool set = true) const;
-	[[nodiscard]] Font semibold(bool set = true) const;
+	[[nodiscard]] Font suborsuper(bool set = true) const;
 	[[nodiscard]] Font monospace(bool set = true) const;
 
 	[[nodiscard]] int size() const;
@@ -125,6 +133,9 @@ public:
 	int descent = 0;
 	int spacew = 0;
 	int elidew = 0;
+
+	QFixed fascent = 0;
+	QFixed fleading = 0;
 
 private:
 	friend class OwnedFont;
@@ -184,5 +195,4 @@ private:
 
 };
 
-} // namespace internal
-} // namespace style
+} // namespace style::internal

@@ -7,13 +7,17 @@
 #pragma once
 
 #include "ui/rp_widget.h"
+#include "ui/ui_utility.h"
 #include "ui/effects/animations.h"
 #include "base/object_ptr.h"
+#include "base/qt_connection.h"
 #include "base/timer.h"
 #include "styles/style_widgets.h"
 
 #include <QtWidgets/QScrollArea>
 #include <QtGui/QtEvents>
+
+class QScroller;
 
 namespace Ui {
 
@@ -45,6 +49,42 @@ struct ScrollToRequest {
 
 };
 
+extern const char kOptionQScroller[];
+
+// Tune a QScroller to approximate macOS native momentum. QScroller only
+// provides in-range kinetics: its overshoot is always disabled - ScrollArea
+// has no overscroll at all, and ElasticScroll implements its own rubber-band
+// overscroll physics fed from the raw events.
+void SetupScrollerPhysics(not_null<QScroller*> scroller);
+
+// Resends the scroll-prepare event and, while a fling is in progress, forces
+// the momentum segment to be rebuilt from the current velocity. QScroller bakes
+// the whole trajectory (including edge clamps) at gesture end and
+// resendPrepareEvent() only shifts it, so without the rebuild a fling stops at
+// the old (shifted) edge; with it, the fling flows into content inserted
+// mid-fling. Null- and state-safe.
+void ResendScrollerPrepare(QScroller *scroller);
+
+class ScrollerStopper final : public QObject {
+public:
+	static ScrollerStopper &Instance();
+
+	void activate(not_null<QScroller*> scroller);
+
+private:
+	ScrollerStopper();
+
+	bool eventFilter(QObject *obj, QEvent *e) override;
+
+	struct {
+		QPointer<QScroller> scroller;
+		base::qt_connection connection;
+	} _active;
+
+	QPoint _mousePos;
+
+};
+
 class ScrollShadow final : public QWidget {
 public:
 	enum class Type {
@@ -71,6 +111,8 @@ public:
 
 	void recountSize();
 	void updateBar(bool force = false);
+	void setTopSkip(int skip);
+	void setBottomSkip(int skip);
 
 	void hideTimeout(crl::time dt);
 
@@ -105,6 +147,8 @@ private:
 	bool _moving = false;
 	bool _topSh = false;
 	bool _bottomSh = false;
+	int _topSkip = 0;
+	int _bottomSkip = 0;
 
 	QPoint _dragStart;
 	QScrollBar *_connected;
@@ -150,6 +194,8 @@ public:
 	void rangeChanged(int oldMax, int newMax, bool vertical);
 
 	void updateBars();
+	void setVerticalBarTopSkip(int skip);
+	void setVerticalBarBottomSkip(int skip);
 
 	bool focusNextPrevChild(bool next) override;
 	void setMovingByScrollBar(bool movingByScrollBar);
@@ -180,6 +226,22 @@ public:
 	}
 	void setCustomTouchProcess(Fn<bool(not_null<QTouchEvent*>)> process) {
 		_customTouchProcess = std::move(process);
+	}
+
+	// Receives wheel input on the axis this scroll doesn't handle
+	// (horizontal): without lockWheelDirection() every event where that
+	// axis dominates, with it whole gestures locked to that axis.
+	void setCrossAxisWheelProcess(
+			Fn<bool(QPoint, Qt::ScrollPhase)> process) {
+		_crossAxisWheelProcess = std::move(process);
+	}
+
+	// Locks each phased wheel gesture to the axis chosen at its start:
+	// cross-axis gestures go whole to the cross-axis process (or are
+	// discarded) and never scroll this area; NoScrollPhase (classic
+	// wheel) events keep per-event routing.
+	void lockWheelDirection() {
+		_wheelDirectionLocked = true;
 	}
 
 	[[nodiscard]] rpl::producer<> scrolls() const;
@@ -223,6 +285,9 @@ private:
 	object_ptr<ScrollShadow> _topShadow, _bottomShadow;
 	int _horizontalValue, _verticalValue;
 
+	QPointer<QScroller> _scroller;
+	QPoint _wheelPos;
+
 	bool _touchEnabled = false;
 	base::Timer _touchTimer;
 	bool _touchScroll = false;
@@ -242,6 +307,9 @@ private:
 
 	Fn<bool(not_null<QWheelEvent*>)> _customWheelProcess;
 	Fn<bool(not_null<QTouchEvent*>)> _customTouchProcess;
+	Fn<bool(QPoint, Qt::ScrollPhase)> _crossAxisWheelProcess;
+	ScrollDirectionLock _wheelDirectionLock;
+	bool _wheelDirectionLocked = false;
 	bool _widgetAcceptsTouch = false;
 
 	object_ptr<QWidget> _widget = { nullptr };

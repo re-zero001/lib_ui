@@ -20,6 +20,7 @@ namespace Ui::GL {
 enum class Backend {
 	Raster,
 	OpenGL,
+	QRhi,
 };
 
 struct Capabilities {
@@ -27,8 +28,22 @@ struct Capabilities {
 	bool transparency = false;
 };
 
+struct RhiCapabilities {
+	bool supported = false;
+	bool compute = false;
+	bool vulkan = false;
+};
+
+extern const char kOptionUseQtRhi[];
+extern const char kOptionEnableVulkanRhi[];
+
 [[nodiscard]] Capabilities CheckCapabilities(QWidget *widget = nullptr);
 [[nodiscard]] Backend ChooseBackendDefault(Capabilities capabilities);
+
+[[nodiscard]] bool WidgetsRhiEnabled();
+[[nodiscard]] bool WidgetsRhiSupported();
+[[nodiscard]] bool WidgetsRhiVulkan();
+[[nodiscard]] RhiCapabilities CheckRhiCapabilities();
 
 void ForceDisable(bool disable);
 

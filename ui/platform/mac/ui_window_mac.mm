@@ -11,6 +11,7 @@
 #include "ui/qt_object_factory.h"
 #include "ui/ui_utility.h"
 #include "base/qt/qt_common_adapters.h"
+#include "base/qt_signal_producer.h"
 #include "base/platform/base_platform_info.h"
 #include "styles/palette.h"
 
@@ -139,6 +140,7 @@ public:
 	void activateBeforeNativeMove();
 	void setStaysOnTop(bool enabled);
 	void setNativeTitleVisibility(bool visible);
+	void reapplyCustomTitle();
 	void close();
 
 private:
@@ -315,8 +317,11 @@ void WindowHelper::Private::initCustomTitle() {
 		return;
 	}
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+	_owner->window()->setWindowFlag(Qt::NoTitleBarBackgroundHint);
+#endif
 	[_nativeWindow setTitlebarAppearsTransparent:YES];
-
+	[_nativeWindow setTitleVisibility:NSWindowTitleHidden];
 	if (_observer) {
 		[_observer release];
 	}
@@ -331,6 +336,45 @@ void WindowHelper::Private::initCustomTitle() {
 	//
 	// Tried to backport a fix, testing.
 	[_nativeWindow setStyleMask:[_nativeWindow styleMask] | NSWindowStyleMaskFullSizeContentView];
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+	// Qt 6.11 may recreate both the NSView and NSWindow after this
+	// point (e.g. in recreateWindowIfNeeded during show). The weak
+	// pointers to the old view/window become nil. Poll from winId()
+	// until the new window appears and reapply customizations.
+	const auto guard = base::make_weak(_owner->window());
+	const auto savedWindow = _nativeWindow;
+	const auto poll = std::make_shared<Fn<void(int)>>();
+	*poll = [this, guard, savedWindow, poll](int attempts) {
+		if (!guard || attempts <= 0) return;
+		const auto wid = _owner->window()->winId();
+		if (!wid) {
+			dispatch_async(dispatch_get_main_queue(), ^{
+				(*poll)(attempts - 1);
+			});
+			return;
+		}
+		const auto freshView = reinterpret_cast<NSView*>(wid);
+		const auto freshWindow = freshView ? [freshView window] : nil;
+		if (!freshWindow) {
+			dispatch_async(dispatch_get_main_queue(), ^{
+				(*poll)(attempts - 1);
+			});
+			return;
+		}
+		if (freshWindow != savedWindow) {
+			_nativeView = freshView;
+			_nativeWindow = freshWindow;
+			_owner->window()->setWindowFlag(Qt::NoTitleBarBackgroundHint);
+			[freshWindow setTitlebarAppearsTransparent:YES];
+			[freshWindow setTitleVisibility:NSWindowTitleHidden];
+			[freshWindow setStyleMask:[freshWindow styleMask]
+				| NSWindowStyleMaskFullSizeContentView];
+		}
+	};
+	dispatch_async(dispatch_get_main_queue(), ^{ (*poll)(50); });
+#endif
+
 	auto inner = [_nativeWindow contentLayoutRect];
 	auto full = [_nativeView frame];
 	_customTitleHeight = qMax(qRound(full.size.height - inner.size.height), 0);
@@ -496,20 +540,22 @@ rpl::producer<FullScreenEvent> FullScreenEvents(
 			}
 
 			WindowObserver *observer = nullptr;
+			rpl::lifetime screenChanges;
 		};
 		const auto state = result.make_state<State>();
 
-		window->winIdValue() | rpl::on_next([=](WId winId) {
+		const auto attach = [=](WId winId) {
 			if (const auto was = base::take(state->observer)) {
 				[was release];
 			}
 			if (!winId) {
-				return;
+				return false;
 			}
 			const auto view = reinterpret_cast<NSView*>(winId);
 			const auto win = [view window];
-			Ensures(win != nullptr);
-
+			if (!win) {
+				return false;
+			}
 			const auto handler = [=](FullScreenEvent event) {
 				consumer.put_next_copy(event);
 			};
@@ -526,6 +572,28 @@ rpl::producer<FullScreenEvent> FullScreenEvents(
 			add(NSWindowWillExitFullScreenNotification, @selector(windowWillExitFullScreen:));
 			add(NSWindowDidEnterFullScreenNotification, @selector(windowDidEnterFullScreen:));
 			add(NSWindowDidExitFullScreenNotification, @selector(windowDidExitFullScreen:));
+			return true;
+		};
+
+		window->winIdValue() | rpl::on_next([=](WId winId) {
+			state->screenChanges.destroy();
+			if (attach(winId)) {
+				return;
+			}
+			// NSView exists but its NSWindow is not attached yet — happens
+			// when the parent window is on a screen with a different device
+			// pixel ratio and Qt is mid-flight rebuilding the native window.
+			// Re-try whenever Qt assigns a screen to the QWindow.
+			const auto handle = window->windowHandle();
+			if (!handle) {
+				return;
+			}
+			base::qt_signal_producer(
+				handle,
+				&QWindow::screenChanged
+			) | rpl::on_next([=](QScreen*) {
+				attach(window->internalWinId());
+			}, state->screenChanges);
 		}, result);
 
 		return result;

@@ -6,6 +6,7 @@
 //
 #include "ui/rp_widget.h"
 
+#include "base/platform/base_platform_info.h"
 #include "base/qt_signal_producer.h"
 #include "ui/accessible/ui_accessible_item.h"
 #include "ui/accessible/ui_accessible_widget.h"
@@ -329,8 +330,11 @@ auto RpWidgetWrap::eventStreams() const -> EventStreams& {
 void AccessibilityState::writeTo(QAccessible::State &state) {
 	state.checkable = checkable ? 1 : 0;
 	state.checked = checked ? 1 : 0;
+	state.extSelectable = extSelectable ? 1 : 0;
+	state.multiSelectable = multiSelectable ? 1 : 0;
 	state.pressed = pressed ? 1 : 0;
 	state.readOnly = readOnly ? 1 : 0;
+	state.selectable = selectable ? 1 : 0;
 	state.selected = selected ? 1 : 0;
 }
 
@@ -338,7 +342,7 @@ RpWidget::RpWidget(QWidget *parent)
 : RpWidgetBase<QWidget>(parent) {
 	[[maybe_unused]] static const auto Once = [] {
 		auto format = QSurfaceFormat::defaultFormat();
-		format.setSwapInterval(0);
+		format.setSwapInterval(::Platform::MetalSupported() ? 1 : 0);
 #ifdef DESKTOP_APP_USE_ANGLE
 		format.setRedBufferSize(8);
 		format.setGreenBufferSize(8);
@@ -453,6 +457,24 @@ void RpWidget::accessibilityChildFocused(int index) {
 	QAccessible::updateAccessibility(&event);
 }
 
+bool RpWidget::accessibilityChildSupportsActions(int index) const {
+	return false;
+}
+
+quintptr RpWidget::accessibilityChildIdentity(int index) const {
+	return 0;
+}
+
+int RpWidget::accessibilityChildIndexByIdentity(quintptr identity) const {
+	return -1;
+}
+
+void RpWidget::accessibilityChildSetFocus(quintptr identity) {
+}
+
+void RpWidget::accessibilityChildActivate(quintptr identity) {
+}
+
 QString RpWidget::accessibilityName() {
 	return QWidget::accessibleName();
 }
@@ -502,6 +524,18 @@ int RpWidget::accessibilityChildCount() const {
 	return -1;
 }
 
+std::vector<not_null<QWidget*>> RpWidget::accessibilityChildWidgets() const {
+	return {};
+}
+
+std::optional<Qt::Orientation> RpWidget::accessibilityOrientation() const {
+	return std::nullopt;
+}
+
+bool RpWidget::accessibilitySelectionList() const {
+	return false;
+}
+
 RpWidget *RpWidget::accessibilityParent() const {
 	return nullptr;
 }
@@ -516,6 +550,17 @@ QAccessibleInterface *RpWidget::accessibilityChildInterface(
 	auto &ids = items.list;
 	if (int(ids.size()) < count) {
 		ids.resize(count);
+	}
+	// Drop a cached item whose row was reordered or replaced, so its stable
+	// identity (and the data the screen reader reads) stays in sync with the
+	// row currently at this index. Destroying the stale item also invalidates
+	// any provider the assistive technology may still be holding for it.
+	if (ids[index]) {
+		const auto identity = accessibilityChildIdentity(index);
+		const auto cached = dynamic_cast<Accessible::Item*>(ids[index].get());
+		if (cached && cached->identity() != identity) {
+			ids[index] = Accessible::UniqueId();
+		}
 	}
 	if (!ids[index]) {
 		ids[index] = Accessible::UniqueId(

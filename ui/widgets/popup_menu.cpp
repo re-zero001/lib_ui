@@ -250,7 +250,13 @@ not_null<QAction*> PopupMenu::addAction(
 		action,
 		base::unique_qptr<PopupMenu>(submenu.release())
 	).first->second.get();
-	saved->setParent(parentWidget());
+	// Reparent under our own parent (like ensureSubmenu and the QMenu
+	// constructor do), but keep the window flags: the single-argument
+	// QWidget::setParent() resets them, which strips the Qt::Popup type set
+	// in init() and demotes the submenu to a plain child widget. Such a widget
+	// has no windowHandle() after createWinId(), so prepareGeometryFor() can't
+	// show it.
+	saved->setParent(parentWidget(), saved->windowFlags());
 	saved->deleteOnHide(false);
 	return action;
 }
@@ -684,6 +690,7 @@ void PopupMenu::showStarted() {
 	if (isHidden()) {
 		show();
 		startShowAnimation();
+		Integration::Instance().preparePopupMenu(this);
 		return;
 	} else if (!_hiding) {
 		return;
@@ -1002,6 +1009,7 @@ void PopupMenu::showPrepared(TriggeredSource source) {
 	if (::Platform::IsWindows()) {
 		ForceFullRepaintSync(this);
 	}
+	Integration::Instance().preparePopupMenu(this);
 	show();
 	Platform::ShowOverAll(this);
 	raise();

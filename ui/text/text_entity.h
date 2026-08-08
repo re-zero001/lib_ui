@@ -53,6 +53,9 @@ enum class EntityType : uchar {
 	Pre,  // block
 	Blockquote,
 	Spoiler,
+	Subscript,
+	Superscript,
+	Marked,
 	FormattedDate,
 };
 
@@ -239,9 +242,25 @@ struct TextWithEntities {
 		const TextWithEntities &) = default;
 };
 
+struct TextForMimeDataTag {
+	int offset = 0;
+	int length = 0;
+	QString id;
+
+	friend inline auto operator<=>(
+		const TextForMimeDataTag &,
+		const TextForMimeDataTag &) = default;
+	friend inline bool operator==(
+		const TextForMimeDataTag &,
+		const TextForMimeDataTag &) = default;
+};
+
+using TextForMimeDataTags = QVector<TextForMimeDataTag>;
+
 struct TextForMimeData {
 	QString expanded;
 	TextWithEntities rich;
+	TextForMimeDataTags tags;
 
 	bool empty() const {
 		return expanded.isEmpty();
@@ -250,10 +269,17 @@ struct TextForMimeData {
 	void reserve(int size, int entitiesCount = 0) {
 		expanded.reserve(size);
 		rich.reserve(size, entitiesCount);
+		tags.reserve(entitiesCount);
 	}
 	TextForMimeData &append(TextForMimeData &&other) {
+		const auto shift = rich.text.size();
 		expanded.append(other.expanded);
 		rich.append(std::move(other.rich));
+		tags.reserve(tags.size() + other.tags.size());
+		for (auto &tag : other.tags) {
+			tag.offset += shift;
+			tags.push_back(std::move(tag));
+		}
 		return *this;
 	}
 	TextForMimeData &append(TextWithEntities &&other) {
@@ -406,6 +432,11 @@ inline const auto kMentionTagStart = qstr("mention://");
 [[nodiscard]] bool IsMentionLink(QStringView link);
 [[nodiscard]] QString MentionEntityData(QStringView link);
 [[nodiscard]] bool IsSeparateTag(QStringView tag);
+[[nodiscard]] QString FormattedDateMetaTag(const QString &data);
+[[nodiscard]] bool IsFormattedDateMetaTag(QStringView tag);
+[[nodiscard]] QString FormattedDateMetaTagData(QStringView tag);
+[[nodiscard]] bool IsRichFormattingTag(QStringView tag);
+[[nodiscard]] bool IsRichLinkTag(QStringView tag);
 [[nodiscard]] QString JoinTag(const QList<QStringView> &list);
 [[nodiscard]] QList<QStringView> SplitTags(QStringView tag);
 [[nodiscard]] QString TagWithRemoved(

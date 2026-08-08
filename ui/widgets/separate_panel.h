@@ -8,12 +8,15 @@
 
 #include "base/flat_map.h"
 #include "base/weak_ptr.h"
+#include "ui/platform/ui_platform_utility.h"
 #include "ui/rp_widget.h"
 #include "ui/effects/animations.h"
 #include "ui/layers/layer_widget.h"
 #include "ui/text/text_entity.h"
 
 #include <rpl/variable.h>
+
+#include <optional>
 
 class Painter;
 
@@ -48,9 +51,16 @@ class FadeWrap;
 
 struct SeparatePanelArgs {
 	QWidget *parent = nullptr;
+	std::optional<QRect> anchorGeometry;
+	Platform::ForeignParent transientParent;
 	bool onAllSpaces = false;
 	Fn<bool(int zorder)> animationsPaused;
 	const style::PopupMenu *menuSt = nullptr;
+};
+
+struct TitleBadgeDescriptor {
+	QSize size;
+	Fn<void(QPainter &p, QSize size)> paint;
 };
 
 class SeparatePanel final : public RpWidget {
@@ -60,7 +70,7 @@ public:
 
 	void setTitle(rpl::producer<QString> title);
 	void setTitleHeight(int height);
-	void setTitleBadge(object_ptr<RpWidget> badge);
+	void setTitleBadge(TitleBadgeDescriptor descriptor);
 	void setInnerSize(QSize size, bool allowResize = false);
 	[[nodiscard]] QRect innerGeometry() const;
 
@@ -70,8 +80,16 @@ public:
 	[[nodiscard]] QMargins computePadding() const;
 
 	void setHideOnDeactivate(bool hideOnDeactivate);
+	void setAnchorData(
+		std::optional<QRect> geometry,
+		Platform::ForeignParent transientParent);
 	void showAndActivate();
 	int hideGetDuration();
+
+	// Instant, animation-less hide that keeps the panel alive and ready
+	// to be re-shown via showAndActivate(). Used by layer stacks that
+	// stash a panel below a newer one. Does not fire close events.
+	void hideForStacking();
 
 	[[nodiscard]] RpWidget *inner() const;
 	void showInner(base::unique_qptr<RpWidget> inner);
@@ -89,6 +107,7 @@ public:
 	[[nodiscard]] rpl::producer<> closeRequests() const;
 	[[nodiscard]] rpl::producer<> closeEvents() const;
 	void setBackAllowed(bool allowed);
+	void setCloseAllowed(bool allowed);
 
 	void updateBackToggled();
 
@@ -163,6 +182,7 @@ private:
 
 	void showMenu(Fn<void(const Menu::MenuCallback&)> fill);
 	[[nodiscard]] bool createMenu(not_null<IconButton*> button);
+	void moveToAnchorGeometry();
 
 	void createFullScreenButtons();
 	void initFullScreenButton(not_null<QWidget*> button);
@@ -174,6 +194,10 @@ private:
 	void toggleSearch(bool shown);
 	[[nodiscard]] rpl::producer<> allBackRequests() const;
 	[[nodiscard]] rpl::producer<> allCloseRequests() const;
+
+	std::optional<QRect> _anchorGeometry;
+	Platform::ForeignParent _transientParent;
+	bool _foreignTransientParentApplied = false;
 
 	const style::PopupMenu &_menuSt;
 	object_ptr<IconButton> _close;
@@ -207,6 +231,7 @@ private:
 	bool _hideOnDeactivate = false;
 	bool _useTransparency = true;
 	bool _backAllowed = false;
+	bool _closeAllowed = true;
 	style::margins _padding;
 
 	bool _dragging = false;

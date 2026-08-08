@@ -69,6 +69,7 @@ public:
 	// 	const ClickContext &context);
 
 	[[nodiscard]] virtual rpl::producer<> forcePopupMenuHideRequests();
+	virtual void preparePopupMenu(not_null<QWidget*> widget);
 
 	[[nodiscard]] virtual QString phraseContextCopyText();
 	[[nodiscard]] virtual QString phraseContextCopyEmail();
